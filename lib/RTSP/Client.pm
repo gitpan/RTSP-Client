@@ -1,9 +1,10 @@
 package RTSP::Client;
 
-use RTSP::Lite;
 use Moose;
+use RTSP::Lite;
+use Carp qw/croak/;
 
-our $VERSION = '0.1';
+our $VERSION = '0.2';
 
 =head1 NAME
 
@@ -19,9 +20,13 @@ RTSP::Client - High-level client for the Real-Time Streaming Protocol
       address            => '10.0.1.105',
       media_path         => '/mpeg4/media.amp',
   );
+  
+  # OR
+  my $client = RTSP::Client->new_from_uri('rtsp://10.0.1.105:554/mpeg4/media.amp');
 
   $client->open or die $!;
 
+  $client->setup;
   $client->play;
   $client->pause;
   $client->stop;
@@ -69,7 +74,7 @@ Ports the client receives data on. Listening and receiving data is not handled b
 has client_port_range => (
     is => 'rw',
     isa => 'Str',
-    default => '6970-6971',
+    default => sub { '6970-6971' },
 );
 
 =item media_path
@@ -82,7 +87,7 @@ e.g. /mpeg4/media.amp
 has media_path => (
     is => 'rw',
     isa => 'Str',
-    default => '/',
+    default => sub { '/' },
 );
 
 =item transport_protocol
@@ -93,7 +98,7 @@ Requested transport protocol, RTP by default
 has transport_protocol => (
     is => 'rw',
     isa => 'Str',
-    default => 'RTP/AVP;unicast',
+    default => sub { 'RTP/AVP;unicast' },
 );
 
 =item address
@@ -115,7 +120,7 @@ RTSP server port. Defaults to 554
 has port => (
     is => 'rw',
     isa => 'Int',
-    default => 554,
+    default => sub { 554 },
 );
 
 =item connected
@@ -153,6 +158,10 @@ has _rtsp => (
     is => 'rw',
     isa => 'RTSP::Lite',
     default => sub { RTSP::Lite->new },
+    handles => [qw/
+                    body headers_array headers_string get_header reset user_agent get_header
+                    delete_req_header get_req_header add_req_header status status_message
+                /],
 );
 
 =back
@@ -171,16 +180,27 @@ sub _request_uri {
 
 =item open
 
-This method opens a connection to the RTSP server and does a SETUP request. Returns true on success, false with $! possibly set on failure.
+This method opens a connection to the RTSP server. Returns true on success, false with $! possibly set on failure.
 
 =cut
 sub open {
     my ($self) = @_;
     
     # open connection, returns $! set on failure
-    $self->_rtsp->open($self->address, $self->port)
-        or return;
-            
+    my $connected = $self->_rtsp->open($self->address, $self->port);
+        
+    $self->connected($connected ? 1 : 0);
+    return $connected;
+}
+
+=item setup
+
+A SETUP request specifies how a single media stream must be transported. This must be done before a PLAY request is sent. The request contains the media stream URL and a transport specifier. This specifier typically includes a local port for receiving RTP data (audio or video), and another for RTCP data (meta information). The server reply usually confirms the chosen parameters, and fills in the missing parts, such as the server's chosen ports. Each media stream must be configured using SETUP before an aggregate play request may be sent.
+
+=cut
+sub setup {
+    my ($self) = @_;
+    
     # request transport
     my $proto = $self->transport_protocol;
     my $ports = $self->client_port_range;
@@ -198,9 +218,32 @@ sub open {
         $self->_rtsp->add_req_header("Session", $session);
     }
     
-    $self->connected($session ? 1 : 0);
+    return $session ? 1 : 0; 
+}
+
+=item new_from_uri(%opts)
+
+Takes same opts as new() and adds additional param: uri
+
+e.g. C<my $rtsp_client = RTSP::Client-E<gt>new_from_uri(uri =E<gt> 'rtsp://10.0.1.105:554/mpeg4/media.amp', debug =E<gt> 1);>
+
+=cut
+sub new_from_uri {
+    my ($class, %opts) = @_;
     
-    return $session ? 1 : 0;
+    my $uri = delete $opts{uri}
+        or croak "No URI passed to RTSP::Client::new_from_uri()";
+    
+    my ($host, $port, $media_path) = $uri =~ m!^rtsp://([-\w.]+):?(\d+)?(/.+)?$!ism;
+
+    unless ($host) {
+        croak "Invalid RTSP URI '$uri' passed to RTSP::Client::new_from_uri()";
+    }
+    
+    $opts{address} = $host;
+    $opts{port} = $port if $port;
+    $opts{media_path} = $media_path if $media_path;
+    return $class->new(%opts);
 }
 
 =item play
@@ -279,17 +322,7 @@ sub describe {
     my ($self) = @_;
     return unless $self->connected;
     return unless $self->request('DESCRIBE');
-    return $self->_rtsp->body;
-}
-
-=item request_status
-
-Get the status code of the last request (e.g. 200, 405)
-
-=cut
-sub request_status {
-    my ($self) = @_;
-    return $self->_rtsp->status;
+    return $self->body;
 }
 
 =item request($method)
@@ -310,7 +343,7 @@ sub request {
     # request status
     my $status = $self->_rtsp->status;
     if ($self->debug) {
-        print "Status: $status " . $self->_rtsp->status_message . "\n";
+        print STDERR "Status: $status " . $self->_rtsp->status_message . "\n";
     }
     if (! $status || $status != 200) {
         return;
@@ -319,8 +352,8 @@ sub request {
     if ($self->print_headers) {
         my @headers = $self->_rtsp->headers_array;
         my $body = $self->_rtsp->body;
-        print "$_\n" foreach @headers;
-        print "$body\n" if $body;
+        print STDERR "$_\n" foreach @headers;
+        print STDERR "$body\n" if $body;
     }
     
     return 1;
@@ -331,7 +364,36 @@ sub DEMOLISH {
     my ($self) = @_;
     return unless $self->connected;
     $self->teardown;
+    $self->reset;
 }
+
+#### these are handled by RTSP::Lite
+
+=item status_message
+
+Get the status message of the last request (e.g. "Bad Request")
+
+=item status
+
+Get the status code of the last request (e.g. 200, 405)
+
+=item get_header ($header)
+
+returns response header
+
+=item add_req_header ($header, $value)
+
+=item get_req_header ($header)
+
+=item delete_req_header ($header)
+
+=item reset
+
+If you wish to reuse the client for multiple requests, you should call reset after each request unless you want to keep the socket open.
+
+=cut
+
+
 
 no Moose;
 __PACKAGE__->meta->make_immutable;

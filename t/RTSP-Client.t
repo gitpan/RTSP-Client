@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use Test::More tests => 8;
+use Test::More tests => 9;
 BEGIN { use_ok('RTSP::Client') };
 
 # to test, pass url of an RTSP server in $ENV{RTSP_CLIENT_TEST_URI}
@@ -8,22 +8,16 @@ BEGIN { use_ok('RTSP::Client') };
 my $uri = $ENV{RTSP_CLIENT_TEST_URI};
 
 SKIP: {
-    skip "No RTSP server URI provided for testing", 7 unless $uri;
+    skip "No RTSP server URI provided for testing", 8 unless $uri;
     
     # parse uri
-    my ($host, $port, $media_path) = $uri =~ m!^rtsp://([-\w.]+):?(\d+)?(/.+)$!ism;
-    skip "Invalid RTSP server URI provided for testing", 7 unless $host && $media_path;
-    
-    my $client = new RTSP::Client(
-        address => $host,
-        port => $port,
-        media_path => $media_path,
-        debug => 0,
-        print_headers => 0,
-    );
+    my $client = RTSP::Client->new_from_uri(uri => $uri);
+    skip "Invalid RTSP server URI provided for testing", 8 unless $client;
 
     $client->open or die $!;
     pass("opened connection to RTSP server");
+    
+    ok($client->setup, "setup");
     
     my @public_options = $client->options_public;
     ok(@public_options, "got public allowed methods: " . join(', ', @public_options));
@@ -35,13 +29,8 @@ SKIP: {
         my $status;
 
         $client->pause;
-        $status = $client->request_status;
+        $status = $client->status;
         ok(($status == 200 || $status == 405), "pause");
-
-        $client->stop;
-        $status = $client->request_status;
-        ok(($status == 200 || $status == 405), "stop");
-        
     }
     
     ok($client->describe, "got SDP info");
