@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use Test::More tests => 9;
+use Test::More tests => 8;
 BEGIN { use_ok('RTSP::Client') };
 
 # to test, pass url of an RTSP server in $ENV{RTSP_CLIENT_TEST_URI}
@@ -8,20 +8,23 @@ BEGIN { use_ok('RTSP::Client') };
 my $uri = $ENV{RTSP_CLIENT_TEST_URI};
 
 SKIP: {
-    skip "No RTSP server URI provided for testing", 8 unless $uri;
+    skip "No RTSP server URI provided for testing", 7 unless $uri;
     
     # parse uri
-    my $client = RTSP::Client->new_from_uri(uri => $uri);
-    skip "Invalid RTSP server URI provided for testing", 8 unless $client;
+    my $client = RTSP::Client->new_from_uri(uri => $uri, client_port_range => '6970-6971');
+    skip "Invalid RTSP server URI provided for testing", 7 unless $client;
 
     $client->open or die $!;
     pass("opened connection to RTSP server");
     
-    ok($client->setup, "setup");
-    
     my @public_options = $client->options_public;
     ok(@public_options, "got public allowed methods: " . join(', ', @public_options));
     
+    $client = RTSP::Client->new_from_uri(uri => $uri, client_port_range => '6970-6971');
+    ok($client->describe, "got SDP info");
+    $client->reset;
+    
+    ok($client->setup, "setup");
     ok($client->play, "play");
         
     # it's ok if these return 405 (method not allowed)
@@ -33,7 +36,6 @@ SKIP: {
         ok(($status == 200 || $status == 405), "pause");
     }
     
-    ok($client->describe, "got SDP info");
     ok($client->teardown, "teardown");
 };
 

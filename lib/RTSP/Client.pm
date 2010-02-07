@@ -4,7 +4,7 @@ use Moose;
 use RTSP::Lite;
 use Carp qw/croak/;
 
-our $VERSION = '0.2';
+our $VERSION = '0.3';
 
 =head1 NAME
 
@@ -22,17 +22,19 @@ RTSP::Client - High-level client for the Real-Time Streaming Protocol
   );
   
   # OR
-  my $client = RTSP::Client->new_from_uri('rtsp://10.0.1.105:554/mpeg4/media.amp');
+  my $client = RTSP::Client->new_from_uri(uri => 'rtsp://10.0.1.105:554/mpeg4/media.amp');
 
   $client->open or die $!;
-
-  $client->setup;
-  $client->play;
-  $client->pause;
-  $client->stop;
   
   my $sdp = $client->describe;
   my @allowed_public_methods = $client->options_public;
+
+  $client->setup;
+  $client->reset;
+  
+  $client->play;
+  $client->pause;
+  
   
   $client->teardown;
   
@@ -74,7 +76,6 @@ Ports the client receives data on. Listening and receiving data is not handled b
 has client_port_range => (
     is => 'rw',
     isa => 'Str',
-    default => sub { '6970-6971' },
 );
 
 =item media_path
@@ -131,6 +132,7 @@ Is the client connected?
 has connected => (
     is => 'rw',
     isa => 'Bool',
+    default => sub { 0 },
 );
 
 =item print_headers
@@ -139,6 +141,11 @@ Print out debug headers
 
 =cut
 has print_headers => (
+    is => 'rw',
+    isa => 'Bool',
+);
+
+has have_set_session_header => (
     is => 'rw',
     isa => 'Bool',
 );
@@ -159,8 +166,8 @@ has _rtsp => (
     isa => 'RTSP::Lite',
     default => sub { RTSP::Lite->new },
     handles => [qw/
-                    body headers_array headers_string get_header reset user_agent get_header
-                    delete_req_header get_req_header add_req_header status status_message
+                    body headers_array headers_string get_header user_agent get_header
+                    delete_req_header get_req_header add_req_header status
                 /],
 );
 
@@ -204,8 +211,12 @@ sub setup {
     # request transport
     my $proto = $self->transport_protocol;
     my $ports = $self->client_port_range;
-    my $transport_req_str = join(';', $proto, "client_port=$ports");
-    $self->_rtsp->add_req_header("Transport", $transport_req_str);
+    if ($ports) {
+        my $transport_req_str = join(';', $proto, "client_port=$ports");
+        $self->_rtsp->add_req_header("Transport", $transport_req_str);
+    } elsif (! $self->get_req_header('Transport')) {
+        warn "no Transport header set in setup()";
+    }
 
     return unless $self->request('SETUP');
         
@@ -215,10 +226,20 @@ sub setup {
     
     if ($session) {
         $self->session_id($session);
-        $self->_rtsp->add_req_header("Session", $session);
+        $self->add_session_header;
     }
     
     return $session ? 1 : 0; 
+}
+
+sub add_session_header {
+    my ($self) = @_;
+    
+    return if $self->have_set_session_header;
+    $self->have_set_session_header(1);
+    
+    $self->add_req_header("Session", $self->session_id)
+        if $self->session_id && ! $self->get_req_header('Session');
 }
 
 =item new_from_uri(%opts)
@@ -240,9 +261,10 @@ sub new_from_uri {
         croak "Invalid RTSP URI '$uri' passed to RTSP::Client::new_from_uri()";
     }
     
-    $opts{address} = $host;
-    $opts{port} = $port if $port;
-    $opts{media_path} = $media_path if $media_path;
+    $opts{address} ||= $host;
+    $opts{port} ||= $port if $port;
+    $opts{media_path} ||= $media_path if $media_path;
+    
     return $class->new(%opts);
 }
 
@@ -253,7 +275,7 @@ A PLAY request will cause one or all media streams to be played. Play requests c
 =cut
 sub play {
     my ($self) = @_;
-    return unless $self->connected;
+    $self->add_session_header;
     return $self->request('PLAY');
 }
 
@@ -264,7 +286,7 @@ A PAUSE request temporarily halts one or all media streams, so it can later be r
 =cut
 sub pause {
     my ($self) = @_;
-    return unless $self->connected;
+    $self->add_session_header;
     return $self->request('PAUSE');
 }
 
@@ -275,7 +297,7 @@ The RECORD request can be used to send a stream to the server for storage.
 =cut
 sub record {
     my ($self) = @_;
-    return unless $self->connected;
+    $self->add_session_header;
     return $self->request('RECORD');
 }
 
@@ -286,14 +308,14 @@ A TEARDOWN request is used to terminate the session. It stops all media streams 
 =cut
 sub teardown {
     my ($self) = @_;
-    return unless $self->connected;
-    $self->connected(0);
+    $self->add_session_header;
     return $self->request('TEARDOWN');
+    $self->connected(0);
+    $self->reset;
 }
 
 sub options {
-    my ($self) = @_;
-    return unless $self->connected;
+    my ($self, $uri) = @_;
     return $self->request('OPTIONS');
 }
 
@@ -320,23 +342,27 @@ This method returns the actual DESCRIBE content, as SDP data
 =cut
 sub describe {
     my ($self) = @_;
-    return unless $self->connected;
     return unless $self->request('DESCRIBE');
     return $self->body;
 }
 
 =item request($method)
 
-Sends a $method request, returns success
+Sends a $method request, returns true on success, false with $! possibly set on failure
 
 =cut
 sub request {
-    my ($self, $method) = @_;
+    my ($self, $method, $uri) = @_;
+    
+    # make sure we're connected
+    unless ($self->connected) {
+        $self->open or return;
+    }
         
     $self->_rtsp->method(uc $method);
     
     # request media
-    my $req_uri = $self->_request_uri;
+    my $req_uri = $uri || $self->_request_uri;
     $self->_rtsp->request($req_uri)
         or return;
         
@@ -362,16 +388,38 @@ sub request {
 # clean up connection if we're still connected
 sub DEMOLISH {
     my ($self) = @_;
-    return unless $self->connected;
-    $self->teardown;
+    
     $self->reset;
+    return unless $self->connected;
+    #$self->teardown;
+    
 }
 
-#### these are handled by RTSP::Lite
+=item reset
+
+If you wish to reuse the client for multiple requests, you should call reset after each request unless you want to keep the socket open.
+
+=cut
+sub reset {
+    my ($self) = @_;
+    
+    $self->_rtsp->reset;
+}
+
 
 =item status_message
 
 Get the status message of the last request (e.g. "Bad Request")
+
+=cut
+sub status_message {
+    my ($self) = @_;
+    my $msg = $self->_rtsp->status_message || '';
+    $msg =~ s/(\r\n)$//sm;
+    return $msg;
+}
+
+#### these are handled by RTSP::Lite
 
 =item status
 
@@ -386,10 +434,6 @@ returns response header
 =item get_req_header ($header)
 
 =item delete_req_header ($header)
-
-=item reset
-
-If you wish to reuse the client for multiple requests, you should call reset after each request unless you want to keep the socket open.
 
 =cut
 

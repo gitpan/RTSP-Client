@@ -14,7 +14,12 @@ DEPENDENCIES
 
 This module requires these other modules and libraries:
 
- Moose, RTSP::Lite
+   Moose, RTSP::Lite
+ 
+TESTS
+
+   To run some tests against a real live RTSP server:
+   RTSP_CLIENT_TEST_URI="rtsp://10.0.1.105:554/mpeg4/media.amp" perl -Ilib t/RTSP-Client.t
 
 COPYRIGHT AND LICENSE
 
