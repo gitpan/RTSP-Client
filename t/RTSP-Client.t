@@ -4,7 +4,7 @@ use Test::More tests => 8;
 BEGIN { use_ok('RTSP::Client') };
 
 # to test, pass url of an RTSP server in $ENV{RTSP_CLIENT_TEST_URI}
-# e.g.   RTSP_CLIENT_TEST_URI="rtsp://10.0.1.105:554/mpeg4/media.amp" perl -Ilib t/RTSP-Client.t
+# e.g.   RTSP_CLIENT_TEST_URI="rtsp://foo:bar@10.0.1.105:554/mpeg4/media.amp" perl -Ilib t/RTSP-Client.t
 my $uri = $ENV{RTSP_CLIENT_TEST_URI};
 
 SKIP: {

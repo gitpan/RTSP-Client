@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               RTSP-Client
-version:            0.3
+version:            0.4
 abstract:           High-level client for the Real-Time Streaming Protocol
 author:
     - Mischa Spiegelmock <revmischa@cpan.org>
@@ -13,6 +13,8 @@ build_requires:
 requires:
     Moose:       0
     RTSP::Lite:  0.1
+resources:
+    repository:  git://github.com/revmischa/rtsp-client.git
 no_index:
     directory:
         - t

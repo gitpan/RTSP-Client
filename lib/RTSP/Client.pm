@@ -4,7 +4,7 @@ use Moose;
 use RTSP::Lite;
 use Carp qw/croak/;
 
-our $VERSION = '0.3';
+our $VERSION = '0.4';
 
 =head1 NAME
 
@@ -255,6 +255,7 @@ sub new_from_uri {
     my $uri = delete $opts{uri}
         or croak "No URI passed to RTSP::Client::new_from_uri()";
     
+    # todo: parse auth
     my ($host, $port, $media_path) = $uri =~ m!^rtsp://([-\w.]+):?(\d+)?(/.+)?$!ism;
 
     unless ($host) {
